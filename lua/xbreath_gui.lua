@@ -1,5 +1,5 @@
--- xBreath_GUI.lua
--- Native GFX implementation (No dependencies)
+-- Parameter window for the xbreath_action.lua script, used to pass the target attenuation value
+-- If assigning to a keyboard shortcut, map xbreath_action.lua, it will invoke xbreath_gui.lua on its own
 
 local ext_section = "xBreath"
 local options_db = {3.0, 6.0, 9.0, 12.0}

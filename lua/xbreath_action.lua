@@ -1,5 +1,7 @@
--- xBreath_Action.lua
--- Binds to a shortcut. Requires xBreath_GUI.lua in the same directory.
+-- The main script attenuating the time selection by the decibel amount defined in the GUI. 
+-- How it works: make a time selection and run the xbreath_action.lua script. It first checks
+-- if the GUI from the xbreath_gui.lua script is displayed (if not, it launches it) and based on the
+-- attenuation value selected there, modifies the Volume Pre-FX envelope to attenuate the breath.
 
 local ext_section = "xBreath"
 local offset_time = 0.05

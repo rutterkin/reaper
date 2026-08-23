@@ -1,6 +1,4 @@
--- Script: Delete Volume (Pre-FX) points in time selection
--- Description: Removes automation nodes within active time range for selected tracks.
--- Language: Lua
+-- The script removes Volume (Pre-FX) envelope points located on active tracks within the time selection boundaries
 
 local function main()
     -- Get time selection

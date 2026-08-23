@@ -1,18 +1,24 @@
+// Script for detecting and automatically ducking breaths
+// Before running the script, select a "representative" breath sample to build a reference template
+// The entire track is then scanned for segments similar to the template, and if a match is found,
+// it will be attenuated by the duck_db value. The steepness of the ducking slopes
+// is controlled by the ramp_in_sec and ramp_out_sec parameters
+
 // USER PARAMETERS
-sim_threshold = 0.75;      // prog podobienstwa, im wyzej, tym bardziej restrykcyjne porownanie (0.0 - 1.0)
-gate_min_db = -55.0;       // minimalny poziom, uznawany za szum tla (Noise floor) w dB
-gate_max_db = -20.0;       // maksymalna glosnosc oddechu (zeby nie przetwarzac naprawde glosnych fragmentow) w dB
-min_freq = 500.0;          // dolna czestotliwosc odciecia, nic nizej nie jest brane pod uwage
-max_freq = 6000.0;         // gorna czestotliwosc odciecia, nic wyzej nie jest brane pod uwage
-duck_db = -9.0;            // wielkosc tlumienia w dB
-ramp_in_sec = 0.05;        // Czas wejscia (Attack)
-ramp_out_sec = 0.15;       // Czas powrotu do 0dB (Release)
-min_len = 0.3;             // minimalna dlugosc oddechu (w sekundach) - zapobiega oznaczaniu sybilantow 
-max_len = 1.2;             // maksymalna dlugosc oddechu (w sekundach)
-hop_sec = 0.025;           // dlugosc analizowanej zakladki
-window_sec = 0.050;        // dlugosc okna analizy
+sim_threshold = 0.75;      // similarity threshold; higher values enforce stricter comparison (0.0 - 1.0)
+gate_min_db = -55.0;       // minimum level considered as noise floor in dB
+gate_max_db = -20.0;       // maximum breath volume (to exclude loud non-breath audio) in dB
+min_freq = 500.0;          // lower cutoff frequency; frequencies below are ignored
+max_freq = 6000.0;         // upper cutoff frequency; frequencies above are ignored
+duck_db = -9.0;            // attenuation amount in dB
+ramp_in_sec = 0.05;        // attack time in seconds
+ramp_out_sec = 0.15;       // release time to 0dB in seconds
+min_len = 0.3;             // minimum breath length in seconds (prevents flagging sibilants)
+max_len = 1.2;             // maximum breath length in seconds
+hop_sec = 0.025;           // analysis hop size in seconds
+window_sec = 0.050;        // analysis window size in seconds
 fft_size = 4096;
-insert_markers = 0;        // czy wstawiać markery oznaczajace oddechy (1 = tak)
+insert_markers = 0;        // whether to insert markers for detected breaths (1 = yes)
 
 // SYSTEM VARIABLES
 srate = GetSetProjectInfo(0, "PROJECT_SRATE", 0, 0);
