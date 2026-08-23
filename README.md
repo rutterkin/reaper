@@ -1,6 +1,3 @@
-# reaper
-Plugins/scripts for Cockos Reaper
-
 # REAPER Audio Processing Scripts Repository
 
 This repository contains advanced audio processing and automation scripts for REAPER, utilizing EEL2, Lua, and Python APIs. 
