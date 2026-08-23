@@ -117,4 +117,25 @@ local function execute()
             shifted_count = shifted_count + 1
         end
     end
-    DEBUG_LOG("Shifted " ..
+    DEBUG_LOG("Shifted " .. tostring(shifted_count) .. " markers.")
+
+        -- Clean up and restore UI states
+        reaper.Main_OnCommand(40020, 0) -- Remove time selection
+        
+        reaper.Main_OnCommand(40310, 0) -- Toggle Ripple Edit
+        if orig_ripple ~= 0 then
+            reaper.Main_OnCommand(orig_ripple, 0)
+        end
+
+        if orig_autox == 0 then
+            reaper.Main_OnCommand(40912, 0)
+        end
+
+        reaper.UpdateArrange()
+        reaper.PreventUIRefresh(-1)
+        reaper.Undo_EndBlock("Native Action Crossfade", -1)
+        
+        DEBUG_LOG("--- Execution Complete ---")
+end
+
+execute()
