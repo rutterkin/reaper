@@ -7,6 +7,14 @@ This repository contains advanced audio processing and automation scripts for RE
 2. Open the Action List in REAPER (`Actions > Show action list...` or `?`).
 3. Click `New action... > Load ReaScript...` (or the `Load` button, depending on version) and select the desired scripts to register them in your environment.
 
+## Python Configuration
+To execute `.py` scripts, REAPER requires a compatible Python environment and dynamic library linking:
+1. Install a 64-bit version of Python 3.x (architecture must match your REAPER installation).
+2. Navigate to `Options > Preferences > Plug-ins > ReaScript`.
+3. Check `Enable Python for use with ReaScript`.
+4. If REAPER fails to autodetect the installation, define the absolute path to the Python dynamic library directory (containing `python3.dll` for Windows, `libpython3.x.dylib` for macOS, or `libpython3.x.so` for Linux) in the `Custom path to python dll directory` field.
+5. Restart REAPER. Successful initialization is indicated by the Python version string displayed at the bottom of the ReaScript preferences pane.
+
 ## 1. Spectral Breath Ducker (EEL2)
 **Description**: Automates breath attenuation using FFT-based spectral matching (4096 size window). It acquires a noise/breath template from a time selection, scans selected tracks via `CreateTrackAudioAccessor`, and calculates similarity via vector dot product of magnitudes. If the match exceeds the threshold, it dynamically ducks the `Volume (Pre-FX)` envelope.
 **Use Case**: Automated breath reduction in voiceover or dialogue tracks without traditional noise gate artifacts.
