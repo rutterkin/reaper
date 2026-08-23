@@ -1,4 +1,4 @@
-// Automixer Pro - EEL2 Script
+// Automixer - EEL2 Script
 // Description: Gap-Fill Latch, Edge-Detection Lookahead, Safe Memory Mapping, Envelope Toggle.
 
 // --- Configuration ---
@@ -38,10 +38,10 @@ gap_fill_blocks = floor(gap_fill_sec / block_size_sec);
 // Setup Target Envelope Parameters
 ENV_MODE == 0 ? (
     strcpy(#env_name, "Volume (Pre-FX)");
-    env_cmd = 40050; // Poprawne ID dla akcji: Toggle Volume (pre-FX) active
+    env_cmd = 40050; // Toggle Volume (pre-FX) active
 ) : (
     strcpy(#env_name, "Volume");
-    env_cmd = 40406; // Poprawne ID dla akcji: Toggle track volume envelope visible
+    env_cmd = 40406; // Toggle track volume envelope visible
 );
 
 num_tracks = CountSelectedTracks(0);
@@ -52,7 +52,7 @@ num_tracks == 0 ? (
     num_blocks = floor(project_length / block_size_sec) + 1;
     num_blocks > MAX_BLOCKS ? num_blocks = MAX_BLOCKS;
     
-    sprintf(#msg, "--- Automixer Pro Execute ---\nBlocks: %d, Takeover Length: %d, Gap Fill: %d, Env Mode: %d\n", num_blocks, takeover_blocks, gap_fill_blocks, ENV_MODE);
+    sprintf(#msg, "--- Automixer Execute ---\nBlocks: %d, Takeover Length: %d, Gap Fill: %d, Env Mode: %d\n", num_blocks, takeover_blocks, gap_fill_blocks, ENV_MODE);
     log_msg(#msg);
     
     t = 0; loop(num_tracks, TRACK_MEM[t] = GetSelectedTrack(0, t); t += 1; );
@@ -179,7 +179,7 @@ num_tracks == 0 ? (
         b += 1;
     );
     
-    // Generowanie tablicy stanów
+    // State table
     b = 0;
     loop(num_blocks,
         speaker = TAKEOVER_MEM[b];
@@ -225,5 +225,5 @@ num_tracks == 0 ? (
     );
     PreventUIRefresh(-1);
     UpdateArrange();
-    log_msg("--- Automixer Pro Complete ---\n");
+    log_msg("--- Automixer Complete ---\n");
 );
