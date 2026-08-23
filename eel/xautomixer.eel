@@ -1,0 +1,229 @@
+// Automixer Pro - EEL2 Script
+// Description: Gap-Fill Latch, Edge-Detection Lookahead, Safe Memory Mapping, Envelope Toggle.
+
+// --- Configuration ---
+ENABLE_DEBUG_LOG = 0;
+ENV_MODE = 0;              // 0 = Volume (Pre-FX), 1 = Volume (Post-FX)
+block_size_sec = 0.05;
+takeover_sec = 1.0;        // Minimum duration for voice takeover
+gap_fill_sec = 0.5;        // Micro-pause tolerance
+transition_time_sec = 0.2;
+attenuation_db = -9.0;
+noise_gate_db = -45.0;
+
+// --- Memory Map ---
+MAX_BLOCKS = 150000;
+TRACK_MEM = 0;               
+RMS_MEM = 1000;              
+GATE_MEM = 1000000;          
+STATE_MEM = 2000000;
+THRESH_MEM = 3000000;
+TAKEOVER_MEM = 3000100; 
+buffer_offset = 4000000;
+
+function log_msg(str) ( ENABLE_DEBUG_LOG ? ShowConsoleMsg(str); );
+function lin2db(lin) ( lin > 0.0000001 ? 20 * log10(lin) : -140; );
+function db2lin(db) ( pow(10, db / 20.0); );
+
+attenuation_gain = db2lin(attenuation_db);
+attenuation_scaled = ScaleToEnvelopeMode(1, attenuation_gain); 
+unity_scaled = ScaleToEnvelopeMode(1, 1.0);
+noise_gate_lin = db2lin(noise_gate_db);
+
+samplerate = 48000;
+samples_per_block = floor(samplerate * block_size_sec);
+takeover_blocks = floor(takeover_sec / block_size_sec);
+gap_fill_blocks = floor(gap_fill_sec / block_size_sec);
+
+// Setup Target Envelope Parameters
+ENV_MODE == 0 ? (
+    strcpy(#env_name, "Volume (Pre-FX)");
+    env_cmd = 40050; // Poprawne ID dla akcji: Toggle Volume (pre-FX) active
+) : (
+    strcpy(#env_name, "Volume");
+    env_cmd = 40406; // Poprawne ID dla akcji: Toggle track volume envelope visible
+);
+
+num_tracks = CountSelectedTracks(0);
+num_tracks == 0 ? (
+    log_msg("Error: No tracks selected.\n");
+) : (
+    project_length = GetProjectLength(0);
+    num_blocks = floor(project_length / block_size_sec) + 1;
+    num_blocks > MAX_BLOCKS ? num_blocks = MAX_BLOCKS;
+    
+    sprintf(#msg, "--- Automixer Pro Execute ---\nBlocks: %d, Takeover Length: %d, Gap Fill: %d, Env Mode: %d\n", num_blocks, takeover_blocks, gap_fill_blocks, ENV_MODE);
+    log_msg(#msg);
+    
+    t = 0; loop(num_tracks, TRACK_MEM[t] = GetSelectedTrack(0, t); t += 1; );
+    
+    // --- Pass 0b: Init Envelopes ---
+    t = 0;
+    loop(num_tracks,
+        track = TRACK_MEM[t];
+        env = GetTrackEnvelopeByName(track, #env_name);
+        !env ? ( SetOnlyTrackSelected(track); Main_OnCommand(env_cmd, 0); );
+        t += 1;
+    );
+    TrackList_AdjustWindows(0); 
+    Main_OnCommand(40297, 0); 
+    t = 0; loop(num_tracks, SetMediaTrackInfo_Value(TRACK_MEM[t], "I_SELECTED", 1); t += 1; );
+    
+    PreventUIRefresh(1); 
+    
+    // --- Pass 1: RMS Analysis & Low-Biased Thresholding ---
+    t = 0;
+    loop(num_tracks,
+        track = TRACK_MEM[t];
+        accessor = CreateTrackAudioAccessor(track);
+        track_sum_rms = 0; valid_blocks = 0;
+        
+        b = 0;
+        loop(num_blocks,
+            start_time = b * block_size_sec;
+            GetAudioAccessorSamples(accessor, samplerate, 1, start_time, samples_per_block, buffer_offset);
+            sum_sq = 0; i = 0;
+            loop(samples_per_block, val = buffer_offset[i]; sum_sq += val * val; i += 1; );
+            rms = sqrt(sum_sq / samples_per_block);
+            RMS_MEM[t * MAX_BLOCKS + b] = rms;
+            
+            rms > noise_gate_lin ? ( track_sum_rms += rms; valid_blocks += 1; );
+            b += 1;
+        );
+        DestroyAudioAccessor(accessor);
+        
+        mean_rms = valid_blocks > 0 ? track_sum_rms / valid_blocks : noise_gate_lin;
+        sum_high = 0; count_high = 0; sum_low = 0; count_low = 0;
+        
+        b = 0;
+        loop(num_blocks,
+            rms = RMS_MEM[t * MAX_BLOCKS + b];
+            rms > noise_gate_lin ? ( rms > mean_rms ? ( sum_high += rms; count_high += 1; ) : ( sum_low += rms; count_low += 1; ); );
+            b += 1;
+        );
+        
+        speech_level = count_high > 0 ? sum_high / count_high : mean_rms;
+        noise_level = count_low > 0 ? sum_low / count_low : mean_rms * 0.1;
+        
+        thresh_db = lin2db(noise_level) + (lin2db(speech_level) - lin2db(noise_level)) * 0.3;
+        THRESH_MEM[t] = db2lin(thresh_db);
+        
+        sprintf(#msg, "Track %d | Speech: %.1f dB | Thresh: %.2f dB\n", t+1, lin2db(speech_level), thresh_db);
+        log_msg(#msg);
+        t += 1;
+    );
+    
+    // --- Pass 2A: Raw Gating ---
+    t = 0;
+    loop(num_tracks,
+        b = 0;
+        loop(num_blocks,
+            GATE_MEM[t * MAX_BLOCKS + b] = RMS_MEM[t * MAX_BLOCKS + b] > THRESH_MEM[t] ? 1 : 0;
+            b += 1;
+        );
+        t += 1;
+    );
+    
+    // --- Pass 2B: Gap Fill ---
+    t = 0;
+    loop(num_tracks,
+        last_one = -999999; 
+        b = 0;
+        loop(num_blocks,
+            GATE_MEM[t * MAX_BLOCKS + b] == 1 ? (
+                gap = b - last_one - 1;
+                gap > 0 && gap <= gap_fill_blocks ? (
+                    fill_idx = last_one + 1;
+                    loop(gap, GATE_MEM[t * MAX_BLOCKS + fill_idx] = 1; fill_idx += 1; );
+                );
+                last_one = b;
+            );
+            b += 1;
+        );
+        t += 1;
+    );
+    
+    // --- Pass 2C: Latch State & Positive Edge Onset Lookahead ---
+    current_speaker = 0;
+    b = 0;
+    loop(num_blocks,
+        best_t = -1;
+        t = 0;
+        loop(num_tracks,
+            t != current_speaker ? (
+                prev_gate = b > 0 ? GATE_MEM[t * MAX_BLOCKS + b - 1] : 0;
+                curr_gate = GATE_MEM[t * MAX_BLOCKS + b];
+                
+                curr_gate == 1 && prev_gate == 0 ? (
+                    solid = 1; w = 0;
+                    loop(takeover_blocks,
+                        check_b = b + w;
+                        check_b < num_blocks ? (
+                            GATE_MEM[t * MAX_BLOCKS + check_b] == 0 ? solid = 0;
+                        ) : ( solid = 0; );
+                        w += 1;
+                    );
+                    solid == 1 ? best_t = t;
+                );
+            );
+            t += 1;
+        );
+        
+        best_t >= 0 ? (
+            current_speaker = best_t;
+            sprintf(#msg, "Takeover -> Track %d at block %d (Onset: %.2fs)\n", best_t+1, b, b * block_size_sec);
+            log_msg(#msg);
+        );
+        
+        TAKEOVER_MEM[b] = current_speaker;
+        b += 1;
+    );
+    
+    // Generowanie tablicy stanów
+    b = 0;
+    loop(num_blocks,
+        speaker = TAKEOVER_MEM[b];
+        t = 0; loop(num_tracks, STATE_MEM[t * MAX_BLOCKS + b] = (t == speaker ? 1 : 0); t += 1; );
+        b += 1;
+    );
+    
+    // --- Pass 3: Envelope Generation ---
+    t = 0;
+    loop(num_tracks,
+        track = TRACK_MEM[t];
+        env = GetTrackEnvelopeByName(track, #env_name);
+        env ? (
+            DeleteEnvelopePointRange(env, 0, project_length + 10.0);
+            init_val = (STATE_MEM[t * MAX_BLOCKS] == 1) ? unity_scaled : attenuation_scaled;
+            InsertEnvelopePoint(env, 0, init_val, 0, 0, 0, 1);
+            
+            pts = 1;
+            prev_state = STATE_MEM[t * MAX_BLOCKS];
+            b = 1;
+            loop(num_blocks - 1,
+                curr_state = STATE_MEM[t * MAX_BLOCKS + b];
+                curr_state != prev_state ? (
+                    time_sec = b * block_size_sec;
+                    start_ramp = max(0, time_sec - transition_time_sec);
+                    
+                    curr_state == 1 ? ( 
+                        InsertEnvelopePoint(env, start_ramp, attenuation_scaled, 0, 0, 0, 1);
+                        InsertEnvelopePoint(env, time_sec, unity_scaled, 0, 0, 0, 1);
+                    ) : ( 
+                        InsertEnvelopePoint(env, start_ramp, unity_scaled, 0, 0, 0, 1);
+                        InsertEnvelopePoint(env, time_sec, attenuation_scaled, 0, 0, 0, 1);
+                    );
+                    pts += 2;
+                    prev_state = curr_state;
+                );
+                b += 1;
+            );
+            Envelope_SortPoints(env);
+            sprintf(#msg, "Track %d | Nodes: %d\n", t+1, pts); log_msg(#msg);
+        );
+        t += 1;
+    );
+    PreventUIRefresh(-1);
+    UpdateArrange();
+    log_msg("--- Automixer Pro Complete ---\n");
+);

@@ -1,0 +1,195 @@
+// USER PARAMETERS
+sim_threshold = 0.75;      // prog podobienstwa, im wyzej, tym bardziej restrykcyjne porownanie (0.0 - 1.0)
+gate_min_db = -55.0;       // minimalny poziom, uznawany za szum tla (Noise floor) w dB
+gate_max_db = -20.0;       // maksymalna glosnosc oddechu (zeby nie przetwarzac naprawde glosnych fragmentow) w dB
+min_freq = 500.0;          // dolna czestotliwosc odciecia, nic nizej nie jest brane pod uwage
+max_freq = 6000.0;         // gorna czestotliwosc odciecia, nic wyzej nie jest brane pod uwage
+duck_db = -9.0;            // wielkosc tlumienia w dB
+ramp_in_sec = 0.05;        // Czas wejscia (Attack)
+ramp_out_sec = 0.15;       // Czas powrotu do 0dB (Release)
+min_len = 0.3;             // minimalna dlugosc oddechu (w sekundach) - zapobiega oznaczaniu sybilantow 
+max_len = 1.2;             // maksymalna dlugosc oddechu (w sekundach)
+hop_sec = 0.025;           // dlugosc analizowanej zakladki
+window_sec = 0.050;        // dlugosc okna analizy
+fft_size = 4096;
+insert_markers = 0;        // czy wstawiać markery oznaczajace oddechy (1 = tak)
+
+// SYSTEM VARIABLES
+srate = GetSetProjectInfo(0, "PROJECT_SRATE", 0, 0);
+min_bin = floor(min_freq * fft_size / srate);
+max_bin = floor(max_freq * fft_size / srate);
+
+// MEMORY ALLOCATION
+temp_buf = 0;
+fft_buf = 10000;
+template_mag = 20000;
+state_buf = 40000;
+
+// PHASE 1: ACQUIRE TEMPLATE
+GetSet_LoopTimeRange2(0, 0, 0, sel_start, sel_end, 0);
+(sel_start == sel_end) ? (
+    MB("No Time Selection found.\n\nPlease highlight a breath sample to create a spectral template before running the script.", "Error: Missing breath sample", 0);
+) : (
+    Undo_BeginBlock2(0);
+    
+    track_cnt = CountSelectedTracks(0);
+    track_cnt == 0 ? ShowConsoleMsg("ERROR: No track selected.\n") : (
+        
+        ref_track = GetSelectedTrack(0, 0);
+        accessor = CreateTrackAudioAccessor(ref_track);
+        curr_time = sel_start;
+        num_template_hops = 0;
+        
+        i = 0; while(i < (fft_size/2)) ( template_mag[i] = 0.0; i += 1; );
+        
+        while(curr_time < (sel_end - window_sec)) (
+            req = floor(window_sec * srate);
+            GetAudioAccessorSamples(accessor, srate, 1, curr_time, req, temp_buf) > 0 ? (
+                
+                i = 0;
+                while(i < req) (
+                    win = 0.5 * (1.0 - cos(2.0 * 3.14159265 * i / (req - 1)));
+                    fft_buf[2*i] = temp_buf[i] * win; fft_buf[2*i+1] = 0.0;
+                    i += 1;
+                );
+                while(i < fft_size) ( fft_buf[2*i] = 0.0; fft_buf[2*i+1] = 0.0; i += 1; );
+                
+                fft(fft_buf, fft_size);
+                fft_permute(fft_buf, fft_size);
+                
+                // ONLY ACCUMULATE TARGET BANDWIDTH
+                bin = min_bin;
+                while(bin <= max_bin) (
+                    template_mag[bin] += sqrt(sqr(fft_buf[2*bin]) + sqr(fft_buf[2*bin+1]));
+                    bin += 1;
+                );
+                num_template_hops += 1;
+            );
+            curr_time += hop_sec;
+        );
+        DestroyAudioAccessor(accessor);
+        
+        num_template_hops > 0 ? (
+            bin = min_bin; while(bin <= max_bin) ( template_mag[bin] /= num_template_hops; bin += 1; );
+            
+            // PHASE 2: SCAN TRACKS
+            t_idx = 0;
+            while(t_idx < track_cnt) (
+                track = GetSelectedTrack(0, t_idx);
+                env = GetTrackEnvelopeByName(track, "Volume (Pre-FX)");
+                env ? (
+                    item_cnt = CountTrackMediaItems(track);
+                    item_cnt > 0 ? (
+                        mode = GetEnvelopeScalingMode(env);
+                        val_0db = ScaleToEnvelopeMode(mode, 1.0);
+                        val_duck = ScaleToEnvelopeMode(mode, pow(10.0, duck_db / 20.0));
+                        
+                        start_time = GetMediaItemInfo_Value(GetTrackMediaItem(track, 0), "D_POSITION");
+                        end_time = 0.0;
+                        i = 0;
+                        while(i < item_cnt) (
+                            item = GetTrackMediaItem(track, i);
+                            pos = GetMediaItemInfo_Value(item, "D_POSITION");
+                            len = GetMediaItemInfo_Value(item, "D_LENGTH");
+                            (pos + len) > end_time ? end_time = pos + len;
+                            i += 1;
+                        );
+                        
+                        DeleteEnvelopePointRange(env, start_time, end_time);
+                        accessor = CreateTrackAudioAccessor(track);
+                        num_hops = 0;
+                        curr_time = start_time;
+                        
+                        while(curr_time < end_time) (
+                            fetch_len = min(window_sec, end_time - curr_time);
+                            req_samples = floor(fetch_len * srate);
+                            state_buf[num_hops] = 0;
+                            
+                            req_samples > 0 ? (
+                                GetAudioAccessorSamples(accessor, srate, 1, curr_time, req_samples, temp_buf) > 0 ? (
+                                    sq_sum = 0.0; s = 0;
+                                    while(s < req_samples) ( sq_sum += sqr(temp_buf[s]); s += 1; );
+                                    rms = sqrt(sq_sum / req_samples);
+                                    rms_db = rms > 0.0000001 ? 20.0 * log10(rms) : -150.0;
+                                    
+                                    // ABSOLUTE GATING
+                                    (rms_db >= gate_min_db && rms_db <= gate_max_db) ? (
+                                        i = 0;
+                                        while(i < req_samples) (
+                                            win = 0.5 * (1.0 - cos(2.0 * 3.14159265 * i / (req_samples - 1)));
+                                            fft_buf[2*i] = temp_buf[i] * win; fft_buf[2*i+1] = 0.0;
+                                            i += 1;
+                                        );
+                                        while(i < fft_size) ( fft_buf[2*i] = 0.0; fft_buf[2*i+1] = 0.0; i += 1; );
+                                        
+                                        fft(fft_buf, fft_size);
+                                        fft_permute(fft_buf, fft_size);
+                                        
+                                        dot = 0.0; norm_a = 0.0; norm_b = 0.0;
+                                        bin = min_bin;
+                                        while(bin <= max_bin) (
+                                            mag = sqrt(sqr(fft_buf[2*bin]) + sqr(fft_buf[2*bin+1]));
+                                            val_t = template_mag[bin];
+                                            
+                                            dot += val_t * mag;
+                                            norm_a += sqr(val_t);
+                                            norm_b += sqr(mag);
+                                            bin += 1;
+                                        );
+                                        
+                                        sim = (norm_a > 0 && norm_b > 0) ? (dot / (sqrt(norm_a) * sqrt(norm_b))) : 0.0;
+                                        sim >= sim_threshold ? state_buf[num_hops] = 1;
+                                    );
+                                );
+                            );
+                            num_hops += 1;
+                            curr_time += hop_sec;
+                        );
+                        DestroyAudioAccessor(accessor);
+                        
+                        // PHASE 3: INTERPOLATION & ENVELOPING
+                        i = 1;
+                        while(i < (num_hops - 1)) (
+                            (state_buf[i-1] == 1 && state_buf[i+1] == 1 && state_buf[i] == 0) ? state_buf[i] = 1;
+                            i += 1;
+                        );
+                        
+                        InsertEnvelopePoint(env, start_time, val_0db, 2, 0.0, 0, 1);
+                        
+                        i = 0;
+                        while(i < num_hops) (
+                            state_buf[i] == 1 ? (
+                                start_idx = i;
+                                while(i < num_hops && state_buf[i] == 1) ( i += 1; );
+                                end_idx = i;
+                                dur = (end_idx - start_idx) * hop_sec;
+                                
+                                (dur >= min_len && dur <= max_len) ? (
+                                    b_start = start_time + start_idx * hop_sec;
+                                    b_end = start_time + end_idx * hop_sec;
+                                    
+                                    insert_markers ? (
+                                        AddProjectMarker(0, 0, b_start, 0, "B", -1);
+                                    );
+
+                                    InsertEnvelopePoint(env, b_start, val_0db, 2, 0.0, 0, 1);
+                                    InsertEnvelopePoint(env, b_start + ramp_in_sec, val_duck, 2, 0.0, 0, 1);
+                                    InsertEnvelopePoint(env, b_end, val_duck, 2, 0.0, 0, 1);
+                                    InsertEnvelopePoint(env, b_end + ramp_out_sec, val_0db, 2, 0.0, 0, 1);                                    
+                                );
+                            ) : (
+                                i += 1;
+                            );
+                        );
+                        
+                        InsertEnvelopePoint(env, end_time, val_0db, 2, 0.0, 0, 1);
+                        Envelope_SortPoints(env);
+                    );
+                );
+                t_idx += 1;
+            );
+            UpdateArrange();
+            Undo_EndBlock2(0, "Bandpassed Template Ducking (EEL2)", -1);
+        );
+    );
+);
