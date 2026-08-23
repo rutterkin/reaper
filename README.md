@@ -12,7 +12,7 @@ This repository contains advanced audio processing and automation scripts for RE
 **Use Case**: Automated breath reduction in voiceover or dialogue tracks without traditional noise gate artifacts.
 **Core Parameters**: `sim_threshold`, `gate_min_db`, `duck_db`.
 
-## 2. Automixer Pro (EEL2)
+## 2. Automixer (EEL2)
 **Description**: Multi-track lookahead automixer. It performs RMS analysis to dynamically calculate speech vs. noise thresholds per track. Incorporates gap-fill logic and edge-detection for voice takeover, generating envelope nodes on either `Volume (Pre-FX)` or `Volume`.
 **Use Case**: Podcast or panel discussion auto-mixing. Reduces mic bleed and background noise automatically based on the active speaker.
 
